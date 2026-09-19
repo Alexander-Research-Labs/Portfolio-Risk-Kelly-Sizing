@@ -14,26 +14,45 @@ def _cache_path(ticker):
     return os.path.join(config.PRICE_CACHE_DIR, ticker.replace(".", "_") + ".csv")
 
 
+def fetch_prices_batch(tickers, force=False):
+    result = {}
+    needed = []
+    for t in tickers:
+        path = _cache_path(t)
+        if not force and os.path.exists(path):
+            df = pd.read_csv(path, index_col=0, parse_dates=True)
+            if not df.empty and (date.today() - df.index[-1].date()).days < 3:
+                result[t] = df["close"]
+                continue
+        needed.append(t)
+
+    if needed:
+        end = date.today()
+        start = end - timedelta(days=int(config.LOOKBACK_YEARS * 365.25) + 10)
+        raw = yf.download(needed, start=start, end=end, auto_adjust=True, progress=False, group_by="ticker")
+        os.makedirs(config.PRICE_CACHE_DIR, exist_ok=True)
+        is_multi = isinstance(raw.columns, pd.MultiIndex)
+        for t in needed:
+            close = raw[t]["Close"] if is_multi else raw["Close"]
+            close = close.dropna()
+            if close.empty:
+                raise ValueError(f"No price data returned for {t}")
+            close.name = "close"
+            close.to_frame().to_csv(_cache_path(t))
+            result[t] = close
+
+    return result
+
+
 def fetch_prices(ticker, force=False):
-    path = _cache_path(ticker)
-    if not force and os.path.exists(path):
-        df = pd.read_csv(path, index_col=0, parse_dates=True)
-        if not df.empty and (date.today() - df.index[-1].date()).days < 3:
-            return df["close"]
+    return fetch_prices_batch([ticker], force=force)[ticker]
 
-    end = date.today()
-    start = end - timedelta(days=int(config.LOOKBACK_YEARS * 365.25) + 10)
-    raw = yf.download(ticker, start=start, end=end, auto_adjust=True, progress=False)
-    if raw.empty:
-        raise ValueError(f"No price data returned for {ticker}")
-    close = raw["Close"]
-    if isinstance(close, pd.DataFrame):
-        close = close.iloc[:, 0]
-    close.name = "close"
 
-    os.makedirs(config.PRICE_CACHE_DIR, exist_ok=True)
-    close.to_frame().to_csv(path)
-    return close
+def common_index(series_dict):
+    idx = None
+    for s in series_dict.values():
+        idx = s.index if idx is None else idx.intersection(s.index)
+    return idx
 
 
 def log_returns(prices):
@@ -41,7 +60,7 @@ def log_returns(prices):
 
 
 def latest_price(ticker):
-    return float(fetch_prices(ticker).iloc[-1])
+    return float(fetch_prices(ticker, force=True).iloc[-1])
 
 
 def detect_jumps(returns):
@@ -62,7 +81,9 @@ def calibrate_jump_rate(returns, jump_returns):
 
 
 def calibrate_pooled_jump_size(all_jump_returns):
-    pooled = np.concatenate(all_jump_returns) if all_jump_returns else np.array([0.0])
+    pooled = np.concatenate(all_jump_returns) if all_jump_returns else np.array([])
+    if len(pooled) == 0:
+        return 0.0, 1e-6
     mu_j = float(pooled.mean())
     sigma_j = float(pooled.std()) if len(pooled) > 1 else 1e-6
     return mu_j, sigma_j
@@ -73,7 +94,7 @@ def realized_variance_series(returns):
     return rolling_std ** 2 * config.TRADING_DAYS_PER_YEAR
 
 
-def calibrate_heston(returns):
+def calibrate_heston(returns, ticker=None):
     v = realized_variance_series(returns)
     v_t = v.iloc[1:].values
     v_lag = v.iloc[:-1].values
@@ -83,10 +104,14 @@ def calibrate_heston(returns):
     b, a = np.polyfit(v_lag, v_t, 1)
     residuals = v_t - (a + b * v_lag)
 
-    kappa = (1 - b) / config.DT
-    theta = a / (1 - b) if abs(1 - b) > 1e-8 else float(v.mean())
-    kappa = max(kappa, 1e-4)
-    theta = max(theta, 1e-6)
+    kappa_raw = (1 - b) / config.DT
+    theta_raw = a / (1 - b) if abs(1 - b) > 1e-8 else float(v.mean())
+    kappa = max(kappa_raw, 1e-4)
+    theta = max(theta_raw, 1e-6)
+    if kappa_raw <= 0 or theta_raw <= 0:
+        label = ticker or "ticker"
+        print(f"WARNING: {label} Heston AR(1) fit was non-stationary or gave invalid theta "
+              f"(kappa_raw={kappa_raw:.4g}, theta_raw={theta_raw:.4g}); clamped to floor values")
 
     mean_v = float(v.mean())
     resid_var = float(np.var(residuals))
@@ -119,16 +144,11 @@ def calibrate_student_t(all_standardized_returns):
 
 
 def calibrate_universe(tickers):
-    prices_by_ticker = {}
-    returns_by_ticker = {}
-    for t in tickers:
-        prices_by_ticker[t] = fetch_prices(t)
-        returns_by_ticker[t] = log_returns(prices_by_ticker[t])
+    prices_by_ticker = fetch_prices_batch(tickers)
+    returns_by_ticker = {t: log_returns(prices_by_ticker[t]) for t in tickers}
 
-    common_index = None
-    for r in returns_by_ticker.values():
-        common_index = r.index if common_index is None else common_index.intersection(r.index)
-    returns_aligned = pd.DataFrame({t: r.reindex(common_index) for t, r in returns_by_ticker.items()}).dropna()
+    aligned_index = common_index(returns_by_ticker)
+    returns_aligned = pd.DataFrame({t: r.reindex(aligned_index) for t, r in returns_by_ticker.items()}).dropna()
 
     per_ticker = {}
     all_jump_returns = []
@@ -138,9 +158,9 @@ def calibrate_universe(tickers):
         jump_returns, diffusive_returns = detect_jumps(r)
         mu, sigma = calibrate_gbm(diffusive_returns)
         lam = calibrate_jump_rate(r, jump_returns)
-        heston = calibrate_heston(r)
+        heston = calibrate_heston(diffusive_returns, ticker=t)
         all_jump_returns.append(jump_returns.values)
-        standardized = (r - r.mean()) / r.std()
+        standardized = (diffusive_returns - diffusive_returns.mean()) / diffusive_returns.std()
         all_standardized.append(standardized.values)
         per_ticker[t] = {"mu": mu, "sigma": sigma, "lambda": lam, "heston": heston}
 
