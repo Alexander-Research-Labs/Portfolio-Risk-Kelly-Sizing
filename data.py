@@ -151,6 +151,18 @@ def calibrate_student_t(all_standardized_returns):
     return float(max(nu, 2.1))
 
 
+def calibrate_regime_correlations(returns_aligned, calm_correlation_matrix):
+    market_vol_proxy = returns_aligned.abs().mean(axis=1)
+    threshold = market_vol_proxy.quantile(config.CORRELATION_STRESS_PERCENTILE)
+    stress_days = returns_aligned[market_vol_proxy >= threshold]
+    if len(stress_days) < 30:
+        return calm_correlation_matrix
+    stress_corr = stress_days.corr()
+    if stress_corr.isnull().values.any():
+        return calm_correlation_matrix
+    return stress_corr
+
+
 def calibrate_from_returns(returns_by_ticker, tickers):
     aligned_index = common_index(returns_by_ticker)
     returns_aligned = pd.DataFrame({t: r.reindex(aligned_index) for t, r in returns_by_ticker.items()}).dropna()
@@ -186,6 +198,7 @@ def calibrate_from_returns(returns_by_ticker, tickers):
     mu_j, sigma_j = calibrate_pooled_jump_size(all_jump_returns)
     nu = calibrate_student_t(all_standardized)
     correlation_matrix = returns_aligned.tail(config.CORRELATION_WINDOW_DAYS).corr()
+    stress_correlation_matrix = calibrate_regime_correlations(returns_aligned, correlation_matrix)
 
     for t in tickers:
         per_ticker[t]["mu_j"] = mu_j
@@ -197,6 +210,7 @@ def calibrate_from_returns(returns_by_ticker, tickers):
         "per_ticker": per_ticker,
         "nu": nu,
         "correlation_matrix": correlation_matrix.to_dict(),
+        "stress_correlation_matrix": stress_correlation_matrix.to_dict(),
         "calibrated_at": date.today().isoformat(),
     }
 

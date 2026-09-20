@@ -52,7 +52,9 @@ def require_ticker_coverage(tickers, params):
 
 
 def build_seed_invariant_inputs(tickers, params, horizon_days):
-    chol = build_correlation_cholesky(tickers, params["correlation_matrix"])
+    chol_calm = build_correlation_cholesky(tickers, params["correlation_matrix"])
+    stress_corr = params.get("stress_correlation_matrix", params["correlation_matrix"])
+    chol_stress = build_correlation_cholesky(tickers, stress_corr)
     nu = params["nu"]
     t_scale = np.sqrt(nu / (nu - 2))
 
@@ -72,7 +74,7 @@ def build_seed_invariant_inputs(tickers, params, horizon_days):
 
     dt = config.DT
     return {
-        "chol": chol, "nu": nu, "t_scale": t_scale,
+        "chol_calm": chol_calm, "chol_stress": chol_stress, "nu": nu, "t_scale": t_scale,
         "mu_dt": (mu * dt)[None, :], "half_dt": 0.5 * dt,
         "lam_idio_dt": (lam_idio * dt)[None, :], "lam_market_dt": lam_market * dt,
         "lam_k_comp_dt": (lam_total * k_comp * dt)[None, :],
@@ -91,9 +93,14 @@ def simulate_one_seed(tickers, inputs, weights_vec, horizon_days, n_paths, seed)
 
     for _ in range(horizon_days):
         v_now = v
+        v_now_floored = np.clip(v_now, 0, None)
+        stress_ratio = (v_now_floored / inputs["theta"]).mean(axis=1)
+        stress_weight = np.clip((stress_ratio - 1) / config.CORRELATION_STRESS_RATIO_SPAN, 0, 1)
 
         z_indep = rng.standard_normal((n_paths, n))
-        z_return = z_indep @ inputs["chol"].T
+        z_calm = z_indep @ inputs["chol_calm"].T
+        z_stress = z_indep @ inputs["chol_stress"].T
+        z_return = (1 - stress_weight)[:, None] * z_calm + stress_weight[:, None] * z_stress
         w_chi2 = rng.chisquare(inputs["nu"], size=n_paths)
         t_return = (z_return * np.sqrt(inputs["nu"] / w_chi2)[:, None]) / inputs["t_scale"]
 
@@ -114,7 +121,6 @@ def simulate_one_seed(tickers, inputs, weights_vec, horizon_days, n_paths, seed)
 
         jump_contribution = idio_jump_contribution + market_jump_contribution
 
-        v_now_floored = np.clip(v_now, 0, None)
         drift = inputs["mu_dt"] - inputs["half_dt"] * v_now_floored - inputs["lam_k_comp_dt"]
         diffusion = np.sqrt(v_now_floored * dt) * t_return
         log_cum += drift + diffusion + jump_contribution
