@@ -13,12 +13,16 @@ def load_holdings(path=None):
 
 
 def portfolio_weights(holdings):
+    if not holdings:
+        raise ValueError("No holdings to simulate. Run setup_portfolio.py first, or add entries to holdings.json.")
     tickers = sorted({h["ticker"] for h in holdings})
     prices = {t: data.latest_price(t) for t in tickers}
     values = {t: 0.0 for t in tickers}
     for h in holdings:
         values[h["ticker"]] += h["shares"] * prices[h["ticker"]]
     total = sum(values.values())
+    if total <= 0:
+        raise ValueError("Portfolio total value is zero or negative - check share counts in holdings.json.")
     weights = {t: v / total for t, v in values.items()}
     return weights, prices, total
 
