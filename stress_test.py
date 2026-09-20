@@ -184,6 +184,20 @@ def run_from_holdings(holdings_path=None, params_path=None):
     }
 
 
+def print_summary(result):
+    horizons = [("10 day", result["var_cvar_10_day"]), ("1 year", result["var_cvar_1_year"])]
+    print("VaR")
+    for label, summary in horizons:
+        row = "   ".join(f"{int(c * 100)}%: {summary[c]['var_mean']:.2%}" for c in summary)
+        print(f"VaR {label}: {row}")
+    print("CVaR")
+    for label, summary in horizons:
+        row = "   ".join(f"{int(c * 100)}%: {summary[c]['cvar_mean']:.2%}" for c in summary)
+        print(f"CVaR {label}: {row}")
+    print()
+
+
 if __name__ == "__main__":
     result = run_from_holdings()
+    print_summary(result)
     print(json.dumps(result, indent=1))
