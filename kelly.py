@@ -76,8 +76,6 @@ def size_candidate(candidate, weights, total_value, params, fraction=None):
 
 
 def validate_with_stress_test(sizing_result, weights, total_value, params, candidate_price):
-    baseline_summary = stress_test.run_stress_test(weights, params)
-
     added_shares = sizing_result["suggested_dollars"] / candidate_price
     new_total = total_value + sizing_result["suggested_dollars"]
 
@@ -85,17 +83,23 @@ def validate_with_stress_test(sizing_result, weights, total_value, params, candi
     candidate = sizing_result["candidate"]
     new_weights[candidate] = new_weights.get(candidate, 0.0) + sizing_result["suggested_dollars"] / new_total
 
-    after_summary = stress_test.run_stress_test(new_weights, params)
+    before_10_day = stress_test.run_stress_test(weights, params, horizon_days=config.HORIZON_DAYS)
+    after_10_day = stress_test.run_stress_test(new_weights, params, horizon_days=config.HORIZON_DAYS)
+    before_1_year = stress_test.run_stress_test(weights, params, horizon_days=config.HORIZON_DAYS_LONG)
+    after_1_year = stress_test.run_stress_test(new_weights, params, horizon_days=config.HORIZON_DAYS_LONG)
 
     return {
-        "before": baseline_summary,
-        "after": after_summary,
+        "before_10_day": before_10_day,
+        "after_10_day": after_10_day,
+        "before_1_year": before_1_year,
+        "after_1_year": after_1_year,
         "added_shares": added_shares,
         "new_weights": new_weights,
     }
 
 
 def run(candidate, holdings_path=None, params_path=None, fraction=None):
+    candidate = candidate.upper()
     holdings = stress_test.load_holdings(holdings_path)
     weights, prices, total_value = stress_test.portfolio_weights(holdings)
     params = data.load_params(params_path)

@@ -150,8 +150,12 @@ def run_from_holdings(holdings_path=None, params_path=None):
     holdings = load_holdings(holdings_path)
     weights, prices, total_value = portfolio_weights(holdings)
     params = data.load_params(params_path)
-    summary = run_stress_test(weights, params)
-    return {"weights": weights, "prices": prices, "total_value": total_value, "var_cvar": summary}
+    summary_10_day = run_stress_test(weights, params, horizon_days=config.HORIZON_DAYS)
+    summary_1_year = run_stress_test(weights, params, horizon_days=config.HORIZON_DAYS_LONG)
+    return {
+        "weights": weights, "prices": prices, "total_value": total_value,
+        "var_cvar_10_day": summary_10_day, "var_cvar_1_year": summary_1_year,
+    }
 
 
 if __name__ == "__main__":
