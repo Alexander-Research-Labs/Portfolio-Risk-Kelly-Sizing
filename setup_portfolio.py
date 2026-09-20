@@ -38,13 +38,14 @@ def prompt_candidates():
         line = input("> ").strip().upper()
         if not line:
             break
+        ticker = line.split()[0]
         try:
-            price = data.latest_price(line)
+            price = data.latest_price(ticker)
         except Exception as e:
-            print(f"  could not fetch {line}: {e}")
+            print(f"  could not fetch {ticker}: {e}")
             continue
-        print(f"  {line}: ${price:,.2f}")
-        tickers.append(line)
+        print(f"  {ticker}: ${price:,.2f}")
+        tickers.append(ticker)
     return tickers
 
 
