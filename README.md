@@ -1,46 +1,98 @@
-# Portfolio Risk & Kelly Sizing
+# Stress-Testing Portfolio + Continuous Kelly Sizing
+Informational and educational purposes only. Nothing in this repository, including its VaR/CVaR output, Kelly sizing suggestions, or any other result, is a recommendation, offer, or solicitation to buy, sell, or hold any security, and none of it should be construed as investment, financial, legal, or tax advice. This is a personal project, not a product of a registered investment adviser, broker-dealer, or fiduciary. The code and its output are provided "AS IS," without warranty of any kind: simulated results depend entirely on model assumptions and calibration choices, may contain errors, and are not guaranteed to reflect real-world outcomes, past or future. Anyone using this code is solely responsible for their own investment decisions and should consult a licensed financial professional before acting on anything produced by it.
 
-Monte Carlo stress-testing and Kelly-optimal position sizing for the actual held portfolio. Buy-only extension of the GBM/Merton/Heston/Student's-t research model — no rebalancing, no ERC.
+## Purpose
 
-## Setup
+The purpose of this repository is to showcase my design of stress-testing my portfolio and to determine the most optimal quantity of an equity to buy with AI-assisted code.
+
+## Backstory + Functionality
+
+This started when I wanted to solve the problem of bleeding money as a value investor. I wanted a way to have peace of mind and estimate how much I could lose, within a given confidence level, over the next 10 days as well as over the next year. I designed a model that uses geometric Brownian motion with modified parameters (jump-diffusion, stochastic volatility, and Student's T distribution returns) because stocks aren't random walks but rather dynamic prices influenced by humanistic patterns and irrationality (I guess the two are inherently the same but I digress). The combined model is essentially a Bates model (minus me adding Student's T shocks on top of it).
+
+Before any simulation is run, it pulls 5 years of daily price history for every ticker added to the watchlist. The simulation is Monte Carlo style and generates 500,000 simulated joint paths across all holdings simultaneously, per seed. This is run for two time horizons: the next 10 days as well as the next year. Each day simulated, every path gets a continuous drift-and-volatility move using that day's simulated Heston volatility, a correlated Student's T random shock, and a chance of a jump; either idiosyncratic to that ticker, or a shared market-wide jump that hits every holding at once, calibrated from how often multiple tickers historically jumped on the same day. That correlation isn't a fixed rate either. It blends between a calm and a stress regime each simulated day, to simulate real-world market conditions where stocks that normally aren't strongly correlated tend to move together during choppy markets. This runs independently across 20 seeds (10,000,000 total paths). When finished it calculates VaR and CVaR (Value at Risk and Conditional Value at Risk) at 95% and 99% confidence levels. 
+
+To size new positions, it uses the continuous Kelly criterion and treats the portfolio as one existing asset and the candidate equity as a second, to find the optimal size that maximizes long-run growth given the candidate equity's expected return, volatility, and correlation to the portfolio. Since the closed-form Kelly formula doesn't account for jumps or fat tails (unlike the simulation itself), the design takes half of the recommendation given and sets a hard limit of zero leverage. It then runs the full simulation again to confirm the VaR/CVaR before reporting findings.
+
+To check whether the model's confidence levels are actually correct, it backtests itself. It walks backward through history, refitting using only the data that would've been available at each past date (To remove lookahead bias) and predict what the 10-day VaR would've been. Finally it checks how often the real 10 day outcome actually exceeded that prediction, compared to how often it should have. (A well-calibrated 95% VaR should be breached about 5% of the time historically; 99% VaR about 1% of the time.)
+
+The general equation for continuous Kelly criterion is as follows:
+
+```
+f* = μ / σ²
+```
+
+The equation used in my design is:
+
+```
+f* = Σ⁻¹ · μ
+```
+
+Where:
+
+```
+f*  = [f_p*, f_c*]                                     - the optimal capital sizing for each of the two "assets" listed above
+μ   = [μ_p, μ_c]                                        - expected annual return of each
+
+                       | Portfolio      Candidate Equity |
+Σ  =      Portfolio    | σ_p²           ρ·σ_p·σ_c        |   - the 2×2 covariance matrix
+     Candidate Equity  | ρ·σ_p·σ_c      σ_c²             |
+```
+
+Variables are as follows:
+
+- **μ_p** — the existing portfolio's expected annual return
+- **σ_p** — the existing portfolio's annual volatility
+- **μ_c** — the candidate equity's expected annual return
+- **σ_c** — the candidate equity's annual volatility
+- **ρ** — the correlation between the portfolio's returns and the candidate's returns
+- **f_c\*** — what fraction of total capital to put into the candidate to maximize long-run (geometric) growth rate
+
+To remove leverage, the variable `KELLY_MAX_F = 1.0` locks the position size to no more than 100% of the total portfolio's size. The same clamp also floors the size at 0%, so the tool can never suggest shorting a candidate either.
+
+
+## Set up + Usage
 
 ```
 pip install -r requirements.txt
 python setup_portfolio.py
 ```
-
-This prompts for current holdings and candidate tickers, writes `holdings.json`/`candidates.json`, and runs the initial calibration.
-
-## Usage
-
 ```
-python stress_test.py          # VaR/CVaR on the current portfolio
-python kelly.py TICKER         # size a candidate, re-validate VaR/CVaR with it added
-python backtest.py             # walk-forward check of whether the VaR estimates actually hold up
-python publish.py              # re-run everything and publish it to the ALR admin panel
+python stress_test.py          - VaR/CVaR on the current portfolio
+python kelly.py [TICKER]       - size a candidate, re-validate VaR/CVaR with it added
+python backtest.py             - walk-forward check. 
 ```
 
-Re-run `setup_portfolio.py` (or `data.calibrate_universe([...])` directly) whenever holdings or candidates change, so the calibration cache in `state/` covers every ticker being simulated.
+## Data
+Yahoo Finance
 
-`publish.py` needs `ALR_ADMIN_EMAIL`/`ALR_ADMIN_PASSWORD` in a local `.env` file (copy `.env.example`) — it signs in as that account and posts the results to the admin quant page, which just displays whatever was last published. Nothing runs live on the site itself.
+-> Daily Close prices
 
-## Files
+-> 5 years of data
 
-- `holdings.json` — actual positions, `[{"ticker": "AAPL", "shares": 40}, ...]`
-- `candidates.json` — tickers being considered
-- `config.py` — every tunable parameter (horizon, path count, seed count, jump threshold, Kelly fraction and cap)
-- `data.py` — price fetch/cache, jump/Heston/Student's-t calibration from 5 years of daily history
-- `stress_test.py` — the Monte Carlo engine (Bates dynamics + shared-mixing-variable multivariate-t) and empirical VaR/CVaR on actual portfolio weights, at both a 10-day and 1-year horizon
-- `kelly.py` — 2-asset continuous Kelly reduction (portfolio-as-one-asset vs. candidate), half-Kelly haircut, hard cap at `f_used <= 1.0`, then re-validated by re-running the full simulation with the candidate added
-- `backtest.py` — walks backward through history, recalibrating with only the data available at each past date (no lookahead) and checking whether the realized return over the following 10 days actually breached the predicted VaR, at the rate the confidence level implies
-- `publish.py` — re-runs the stress test and every candidate's sizing, then posts the bundled result to the ALR admin panel
+-> Cached unless 3 days old
 
-## Notes
+## Known Flaws/Limitations
+No Backtesting for CVaR since there are too few data points.
+Variance should mathematically never go negative, but the math used to simulate it accidentally produces a negative number. Instead of a more complex fix, the tool just changes it to zero whenever that happens. Not a unique issue to this tool and not something that needs fixing.
+VaR/CVaR describe a confidence level, losses beyond the reported number remain possible by construction.
 
-- `f_star` from `kelly.py` is a closed-form Gaussian estimate. It knows nothing about the jumps, stochastic vol, or fat tails the simulation models — that's why every sizing run re-checks VaR/CVaR before/after through the actual simulation rather than trusting the formula alone.
-- Jumps are split into two components: an idiosyncratic rate per ticker, and a shared "market jump" rate calibrated from how often multiple tickers jumped on the same historical day. A market jump hits every holding simultaneously in the simulation; idiosyncratic jumps stay independent per ticker.
-- The correlation matrix is calibrated from a rolling 90-day window (`CORRELATION_WINDOW_DAYS`), not the full 5-year history, so it reflects more recent co-movement rather than a stale multi-year average.
-- Correlation is also dynamic *within* a simulation, not frozen for the whole horizon: two correlation regimes are calibrated ("calm" and "stress," the latter from historically high-volatility days), and every simulated day, every path blends between them based on how elevated that path's own simulated volatility is at that moment - so correlation structure shifts toward the stress regime exactly when a path is living through a simulated crisis.
-- Heston variance is floored at zero each step (full truncation), since the Feller condition isn't guaranteed to hold for every ticker — this is a standard, widely-used technique for this situation, not a shortcut unique to this tool.
-- VaR/CVaR describe a confidence level, not a hard ceiling; losses beyond the reported number remain possible by construction.
-- `state/` holds cached prices and the last calibration; delete it to force a full refetch.
+## Output
+stress_test.py and kelly.py print JSON. A trimmed example from stress_test.py:
+```
+{
+  "total_value": 3274.95,
+  "var_cvar_10_day": {
+    "0.95": { "var_mean": 0.0723, "cvar_mean": 0.0973 },
+    "0.99": { "var_mean": 0.1123, "cvar_mean": 0.1384 }
+  },
+  "var_cvar_1_year": {
+    "0.95": { "var_mean": 0.2774, "cvar_mean": 0.3434 },
+    "0.99": { "var_mean": 0.3850, "cvar_mean": 0.4309 }
+  }
+}
+```
+## Other
+
+This was made after my research project on the repository "Geometric-Brownian-Motion-for-VaR-and-Equal-Risk-Contribution," so excuse the "out of order" feel and similar study topic and method it might have. I may or may not release that project. Side note: very fun experience learning the math behind this and understanding a 2x2 covariance matrix. Please enjoy my design; I spent ~4 hours designing the framework before AI assisted me with the code.
+
+Originally built for my private portfolio tools.
