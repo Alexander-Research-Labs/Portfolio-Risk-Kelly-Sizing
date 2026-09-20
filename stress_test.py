@@ -1,4 +1,5 @@
 import json
+import sys
 
 import numpy as np
 
@@ -150,12 +151,15 @@ def run_stress_test(weights, params, horizon_days=None, n_paths=None, n_seeds=No
     weights_vec = np.array([weights[t] for t in tickers])
     inputs = build_seed_invariant_inputs(tickers, params, horizon_days)
 
+    horizon_label = "1-year" if horizon_days == config.HORIZON_DAYS_LONG else f"{horizon_days}-day"
     results = {c: [] for c in config.VAR_CONFIDENCE_LEVELS}
     for seed in range(n_seeds):
+        print(f"\r{horizon_label} horizon: seed {seed + 1}/{n_seeds}", end="", flush=True, file=sys.stderr)
         portfolio_returns = simulate_one_seed(tickers, inputs, weights_vec, horizon_days, n_paths, seed)
         for c in config.VAR_CONFIDENCE_LEVELS:
             var, cvar = var_cvar(portfolio_returns, c)
             results[c].append((var, cvar))
+    print(file=sys.stderr)
 
     summary = {}
     for c, pairs in results.items():
