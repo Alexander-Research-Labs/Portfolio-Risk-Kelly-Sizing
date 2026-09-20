@@ -89,6 +89,14 @@ def calibrate_pooled_jump_size(all_jump_returns):
     return mu_j, sigma_j
 
 
+def detect_shared_jump_days(jump_days_by_ticker, aligned_index, min_tickers):
+    shared_count = pd.Series(0, index=aligned_index)
+    for jump_index in jump_days_by_ticker.values():
+        hits = jump_index.intersection(aligned_index)
+        shared_count.loc[hits] += 1
+    return set(shared_count[shared_count >= min_tickers].index)
+
+
 def realized_variance_series(returns):
     rolling_std = returns.rolling(config.HESTON_ROLLING_WINDOW).std().dropna()
     return rolling_std ** 2 * config.TRADING_DAYS_PER_YEAR
@@ -143,34 +151,46 @@ def calibrate_student_t(all_standardized_returns):
     return float(max(nu, 2.1))
 
 
-def calibrate_universe(tickers):
-    prices_by_ticker = fetch_prices_batch(tickers)
-    returns_by_ticker = {t: log_returns(prices_by_ticker[t]) for t in tickers}
-
+def calibrate_from_returns(returns_by_ticker, tickers):
     aligned_index = common_index(returns_by_ticker)
     returns_aligned = pd.DataFrame({t: r.reindex(aligned_index) for t, r in returns_by_ticker.items()}).dropna()
+    years = len(aligned_index) / config.TRADING_DAYS_PER_YEAR
+
+    jump_returns_by_ticker = {}
+    diffusive_by_ticker = {}
+    for t in tickers:
+        jump_returns, diffusive_returns = detect_jumps(returns_by_ticker[t])
+        jump_returns_by_ticker[t] = jump_returns
+        diffusive_by_ticker[t] = diffusive_returns
+
+    shared_days = detect_shared_jump_days(
+        {t: jr.index for t, jr in jump_returns_by_ticker.items()}, aligned_index, config.SYSTEMIC_JUMP_MIN_TICKERS
+    )
+    lambda_market = len(shared_days) / years if years > 0 else 0.0
 
     per_ticker = {}
     all_jump_returns = []
     all_standardized = []
     for t in tickers:
-        r = returns_by_ticker[t]
-        jump_returns, diffusive_returns = detect_jumps(r)
+        jump_returns = jump_returns_by_ticker[t]
+        diffusive_returns = diffusive_by_ticker[t]
         mu, sigma = calibrate_gbm(diffusive_returns)
-        lam = calibrate_jump_rate(r, jump_returns)
+        idio_jump_count = len(jump_returns.index.difference(shared_days))
+        lam_idio = idio_jump_count / years if years > 0 else 0.0
         heston = calibrate_heston(diffusive_returns, ticker=t)
         all_jump_returns.append(jump_returns.values)
         standardized = (diffusive_returns - diffusive_returns.mean()) / diffusive_returns.std()
         all_standardized.append(standardized.values)
-        per_ticker[t] = {"mu": mu, "sigma": sigma, "lambda": lam, "heston": heston}
+        per_ticker[t] = {"mu": mu, "sigma": sigma, "lambda_idio": lam_idio, "heston": heston}
 
     mu_j, sigma_j = calibrate_pooled_jump_size(all_jump_returns)
     nu = calibrate_student_t(all_standardized)
-    correlation_matrix = returns_aligned.corr()
+    correlation_matrix = returns_aligned.tail(config.CORRELATION_WINDOW_DAYS).corr()
 
     for t in tickers:
         per_ticker[t]["mu_j"] = mu_j
         per_ticker[t]["sigma_j"] = sigma_j
+        per_ticker[t]["lambda_market"] = lambda_market
 
     return {
         "tickers": tickers,
@@ -179,6 +199,12 @@ def calibrate_universe(tickers):
         "correlation_matrix": correlation_matrix.to_dict(),
         "calibrated_at": date.today().isoformat(),
     }
+
+
+def calibrate_universe(tickers):
+    prices_by_ticker = fetch_prices_batch(tickers)
+    returns_by_ticker = {t: log_returns(prices_by_ticker[t]) for t in tickers}
+    return calibrate_from_returns(returns_by_ticker, tickers)
 
 
 def save_params(params, path=None):

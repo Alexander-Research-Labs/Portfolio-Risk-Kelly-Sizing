@@ -57,10 +57,12 @@ def build_seed_invariant_inputs(tickers, params, horizon_days):
     t_scale = np.sqrt(nu / (nu - 2))
 
     mu = np.array([params["per_ticker"][t]["mu"] for t in tickers])
-    lam = np.array([params["per_ticker"][t]["lambda"] for t in tickers])
+    lam_idio = np.array([params["per_ticker"][t]["lambda_idio"] for t in tickers])
+    lam_market = params["per_ticker"][tickers[0]]["lambda_market"]
     mu_j = params["per_ticker"][tickers[0]]["mu_j"]
     sigma_j = params["per_ticker"][tickers[0]]["sigma_j"]
     k_comp = np.exp(mu_j + 0.5 * sigma_j ** 2) - 1
+    lam_total = lam_idio + lam_market
 
     kappa = np.array([params["per_ticker"][t]["heston"]["kappa"] for t in tickers])
     theta = np.array([params["per_ticker"][t]["heston"]["theta"] for t in tickers])
@@ -72,7 +74,8 @@ def build_seed_invariant_inputs(tickers, params, horizon_days):
     return {
         "chol": chol, "nu": nu, "t_scale": t_scale,
         "mu_dt": (mu * dt)[None, :], "half_dt": 0.5 * dt,
-        "lam_dt": (lam * dt)[None, :], "lam_k_comp_dt": (lam * k_comp * dt)[None, :],
+        "lam_idio_dt": (lam_idio * dt)[None, :], "lam_market_dt": lam_market * dt,
+        "lam_k_comp_dt": (lam_total * k_comp * dt)[None, :],
         "mu_j": mu_j, "sigma_j": sigma_j,
         "kappa_dt": (kappa * dt)[None, :], "theta": theta[None, :], "xi": xi[None, :], "rho": rho[None, :],
         "v0": v0, "dt": dt,
@@ -98,9 +101,18 @@ def simulate_one_seed(tickers, inputs, weights_vec, horizon_days, n_paths, seed)
         rho = inputs["rho"]
         zv = rho * z_return + np.sqrt(np.clip(1 - rho ** 2, 0, None)) * zv_indep
 
-        n_jumps = rng.poisson(np.broadcast_to(inputs["lam_dt"], (n_paths, n)))
-        z_jump = rng.standard_normal((n_paths, n))
-        jump_contribution = n_jumps * inputs["mu_j"] + inputs["sigma_j"] * np.sqrt(n_jumps) * z_jump
+        n_jumps_idio = rng.poisson(np.broadcast_to(inputs["lam_idio_dt"], (n_paths, n)))
+        z_jump_idio = rng.standard_normal((n_paths, n))
+        idio_jump_contribution = n_jumps_idio * inputs["mu_j"] + inputs["sigma_j"] * np.sqrt(n_jumps_idio) * z_jump_idio
+
+        n_jumps_market = rng.poisson(inputs["lam_market_dt"], size=n_paths)
+        z_jump_market = rng.standard_normal((n_paths, n))
+        market_jump_contribution = (
+            n_jumps_market[:, None] * inputs["mu_j"]
+            + inputs["sigma_j"] * np.sqrt(n_jumps_market)[:, None] * z_jump_market
+        )
+
+        jump_contribution = idio_jump_contribution + market_jump_contribution
 
         v_now_floored = np.clip(v_now, 0, None)
         drift = inputs["mu_dt"] - inputs["half_dt"] * v_now_floored - inputs["lam_k_comp_dt"]
