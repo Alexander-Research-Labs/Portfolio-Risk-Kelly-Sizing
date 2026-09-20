@@ -57,7 +57,7 @@ pip install -r requirements.txt
 python setup_portfolio.py
 ```
 ```
-Run Setup_Portfolio.py         # Configures portfolio
+python setup_portfolio.py      - Sets up portfolio
 python stress_test.py          - VaR/CVaR on the current portfolio
 python kelly.py [TICKER]       - size a candidate, re-validate VaR/CVaR with it added
 python backtest.py             - walk-forward check. 
