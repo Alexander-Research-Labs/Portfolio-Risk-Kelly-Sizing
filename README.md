@@ -78,22 +78,12 @@ Variance should mathematically never go negative, but the math used to simulate 
 VaR/CVaR describe a confidence level, losses beyond the reported number remain possible by construction.
 
 ## Output
-stress_test.py and kelly.py print JSON. A trimmed example from stress_test.py:
-```
-{
-  "total_value": 3274.95,
-  "var_cvar_10_day": {
-    "0.95": { "var_mean": 0.0723, "cvar_mean": 0.0973 },
-    "0.99": { "var_mean": 0.1123, "cvar_mean": 0.1384 }
-  },
-  "var_cvar_1_year": {
-    "0.95": { "var_mean": 0.2774, "cvar_mean": 0.3434 },
-    "0.99": { "var_mean": 0.3850, "cvar_mean": 0.4309 }
-  }
-}
-```
+stress_test.py and kelly.py print JSON. These are ran in the folder's command terminal.
+`python stress_test.py` — the Monte Carlo engine (Bates dynamics + shared-mixing-variable multivariate-t) and empirical VaR/CVaR on actual portfolio weights, at both a 10-day and 1-year horizon
+`python kelly.py` — 2-asset continuous Kelly reduction (portfolio-as-one-asset vs. candidate), half-Kelly haircut, hard cap at `f_used <= 1.0`, then re-validated by re-running the full simulation with the candidate added
+`python backtest.py` — walks backward through history, recalibrating with only the data available at each past date (no lookahead) and checking whether the realized return over the following 10 days actually breached the predicted VaR, at the rate the confidence level implies
 ## Other
 
-This was made after my research project on the repository "Geometric-Brownian-Motion-for-VaR-and-Equal-Risk-Contribution," so excuse the "out of order" feel and similar study topic and method it might have. I may or may not release that project. Side note: very fun experience learning the math behind this and understanding a 2x2 covariance matrix. Please enjoy my design; I spent ~4 hours designing the framework before AI assisted me with the code.
+This research project was made after my research project on the repository "Geometric-Brownian-Motion-for-VaR-and-Equal-Risk-Contribution," so excuse the "out of order" feel and similar study topic and method it might have. I may or may not release that project.
 
 Originally built for my private portfolio tools.
