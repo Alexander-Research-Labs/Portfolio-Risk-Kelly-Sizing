@@ -1,4 +1,4 @@
-# Stress-Testing Portfolio + Continuous Kelly Sizing
+# Portfolio Risk Management 
 Discalimer: Informational and educational purposes only. Nothing in this repository, including its VaR/CVaR output, Kelly sizing suggestions, or any other result, is a recommendation, offer, or solicitation to buy, sell, or hold any security, and none of it should be construed as investment, financial, legal, or tax advice. This is a personal project, not a product of a registered investment adviser, broker-dealer, or fiduciary. The code and its output are provided "AS IS," without warranty of any kind: simulated results depend entirely on model assumptions and calibration choices, may contain errors, and are not guaranteed to reflect real-world outcomes, past or future. Anyone using this code is solely responsible for their own investment decisions and should consult a licensed financial professional before acting on anything produced by it.
 
 ## Purpose
