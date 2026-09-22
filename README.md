@@ -49,41 +49,11 @@ Variables are as follows:
 
 To remove leverage, the variable `KELLY_MAX_F = 1.0` locks the position size to no more than 100% of the total portfolio's size. The same clamp also floors the size at 0%, so the tool can never suggest shorting a candidate either.
 
-
-## Set up + Usage
-
-```
-pip install -r requirements.txt
-python setup_portfolio.py
-```
-```
-python setup_portfolio.py      - Sets up portfolio
-python stress_test.py          - VaR/CVaR on the current portfolio
-python kelly.py [TICKER]       - size a candidate, re-validate VaR/CVaR with it added
-python backtest.py             - walk-forward check. 
-```
-
-## Data
-Yahoo Finance
-
--> Daily Close prices
-
--> 5 years of data
-
--> Cached unless 3 days old
-
 ## Known Flaws/Limitations
 No backtesting for CVaR since there are too few data points.
 Variance should mathematically never go negative, but the math used to simulate it accidentally produces a negative number. Instead of a more complex fix, the tool just changes it to zero whenever that happens. Not a unique issue to this tool and not something that needs fixing.
 VaR/CVaR describe a confidence level, losses beyond the reported number remain possible by construction.
 
-## Output
-stress_test.py and kelly.py print JSON. These commands runn in the folder's command terminal.
-```
-`python stress_test.py` — the Monte Carlo engine (Bates dynamics + shared-mixing-variable multivariate-t) and empirical VaR/CVaR on actual portfolio weights, at both a 10-day and 1-year horizon
-`python kelly.py` — 2-asset continuous Kelly reduction (portfolio-as-one-asset vs. candidate), half-Kelly haircut, hard cap at `f_used <= 1.0`, then re-validated by re-running the full simulation with the candidate added
-`python backtest.py` — walks backward through history, recalibrating with only the data available at each past date (no lookahead) and checking whether the realized return over the following 10 days actually breached the predicted VaR, at the rate the confidence level implies
-```
 ## Other
 
 This research project was made after my research project on the repository "Geometric-Brownian-Motion-for-VaR-and-Equal-Risk-Contribution," so excuse the "out of order" feel and similar study topic and method it might have. I may or may not release that project.
