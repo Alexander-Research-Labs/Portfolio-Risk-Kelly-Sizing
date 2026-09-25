@@ -7,12 +7,18 @@ import data
 import stress_test
 
 
-def portfolio_mu_sigma(weights, params):
+def portfolio_mu_sigma(weights, params, risk_free_rate=0.0):
     tickers = list(weights.keys())
     w = np.array([weights[t] for t in tickers])
-    mu_vec = np.array([params["per_ticker"][t]["mu"] for t in tickers])
+    mu_vec = np.array([params["per_ticker"][t]["mu"] - risk_free_rate for t in tickers])
     sigma_vec = np.array([params["per_ticker"][t]["sigma"] for t in tickers])
-    corr = np.array([[params["correlation_matrix"][ti][tj] for tj in tickers] for ti in tickers])
+    try:
+        corr = np.array([[params["correlation_matrix"][ti][tj] for tj in tickers] for ti in tickers])
+    except KeyError as missing:
+        raise ValueError(
+            f"No correlation data for {missing} across the held portfolio. "
+            f"Re-run calibration with all held tickers sharing enough overlapping history."
+        ) from None
     cov = np.outer(sigma_vec, sigma_vec) * corr
 
     mu_p = float(w @ mu_vec)
@@ -20,10 +26,10 @@ def portfolio_mu_sigma(weights, params):
     return mu_p, sigma_p_sq, tickers, w, sigma_vec
 
 
-def candidate_mu_sigma_rho(candidate, weights, params):
-    mu_p, sigma_p_sq, tickers, w, sigma_vec = portfolio_mu_sigma(weights, params)
+def candidate_mu_sigma_rho(candidate, weights, params, risk_free_rate=0.0):
+    mu_p, sigma_p_sq, tickers, w, sigma_vec = portfolio_mu_sigma(weights, params, risk_free_rate)
 
-    mu_c = params["per_ticker"][candidate]["mu"]
+    mu_c = params["per_ticker"][candidate]["mu"] - risk_free_rate
     sigma_c = params["per_ticker"][candidate]["sigma"]
 
     corr_row = params["correlation_matrix"].get(candidate, {})
@@ -52,9 +58,11 @@ def solve_kelly(mu_p, sigma_p, mu_c, sigma_c, rho_pc):
     return float(f_star[0]), float(f_star[1])
 
 
-def size_candidate(candidate, weights, total_value, params, fraction=None):
+def size_candidate(candidate, weights, total_value, params, fraction=None, risk_free_rate=None):
     fraction = fraction if fraction is not None else config.KELLY_FRACTION
-    mu_p, sigma_p, mu_c, sigma_c, rho_pc = candidate_mu_sigma_rho(candidate, weights, params)
+    if risk_free_rate is None:
+        risk_free_rate = data.risk_free_rate()
+    mu_p, sigma_p, mu_c, sigma_c, rho_pc = candidate_mu_sigma_rho(candidate, weights, params, risk_free_rate)
     f_star_p, f_star_c = solve_kelly(mu_p, sigma_p, mu_c, sigma_c, rho_pc)
 
     f_half = fraction * f_star_c
@@ -95,6 +103,7 @@ def validate_with_stress_test(sizing_result, weights, total_value, params, candi
         "after_1_year": after_1_year,
         "added_shares": added_shares,
         "new_weights": new_weights,
+        "funding_assumption": "new_capital",
     }
 
 

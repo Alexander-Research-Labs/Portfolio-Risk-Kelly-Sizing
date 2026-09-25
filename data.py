@@ -2,12 +2,28 @@ import json
 import os
 from datetime import date, timedelta
 
+import requests
+
 import numpy as np
 import pandas as pd
 import yfinance as yf
 from scipy import stats
 
 import config
+
+
+def risk_free_rate():
+    try:
+        res = requests.get(
+            "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS3MO",
+            timeout=10,
+        )
+        res.raise_for_status()
+        last_line = res.text.strip().splitlines()[-1]
+        _, value = last_line.split(",")
+        return float(value) / 100
+    except Exception:
+        return config.RISK_FREE_RATE_FALLBACK
 
 
 def _cache_path(ticker):

@@ -25,7 +25,7 @@ def load_env():
             if not line or line.startswith("#") or "=" not in line:
                 continue
             key, _, value = line.partition("=")
-            os.environ.setdefault(key.strip(), value.strip())
+            os.environ[key.strip()] = value.strip()
 
 
 def get_access_token(email, password):
@@ -74,24 +74,33 @@ def build_snapshot():
     }
 
 
-def main():
-    load_env()
+def publish_headers():
+    secret = os.environ.get("ALR_PUBLISH_SECRET")
+    if secret:
+        return {"X-Publish-Secret": secret, "content-type": "application/json"}
+
     email = os.environ.get("ALR_ADMIN_EMAIL")
     password = os.environ.get("ALR_ADMIN_PASSWORD")
     if not email or not password:
-        print("Set ALR_ADMIN_EMAIL and ALR_ADMIN_PASSWORD in .env first (copy .env.example).")
+        print("Set ALR_PUBLISH_SECRET in .env (preferred), or ALR_ADMIN_EMAIL and ALR_ADMIN_PASSWORD.")
         sys.exit(1)
+    print("Signing in with the admin account (set ALR_PUBLISH_SECRET to avoid this)...")
+    token = get_access_token(email, password)
+    return {"Authorization": f"Bearer {token}", "content-type": "application/json"}
+
+
+def main():
+    load_env()
 
     print("Running the full simulation for the portfolio and every candidate...")
     snapshot = build_snapshot()
 
-    print("Signing in...")
-    token = get_access_token(email, password)
+    headers = publish_headers()
 
     print("Publishing to Alexander Research Labs...")
     res = requests.post(
         PUBLISH_ENDPOINT,
-        headers={"Authorization": f"Bearer {token}", "content-type": "application/json"},
+        headers=headers,
         json=snapshot,
         timeout=30,
     )
